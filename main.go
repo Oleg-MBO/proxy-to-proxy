@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/oov/socks5"
 	log "github.com/sirupsen/logrus"
@@ -30,41 +31,47 @@ func checkErr(err error) {
 }
 
 func main() {
-	// proxyConf := ProxySocks5Conf{
-	// 	Address: "188.120.234.190:9261",
-	// }
-	// lat, err := proxyConf.CheckLatency()
+
+	// proxyList, err := GetProxiesList("RU")
 	// checkErr(err)
-	// fmt.Printf("latensy %f s\n", lat)
-	// fmt.Printf("out ip is %s\n", string(proxyConf.OutIP))
-
-	// fmt.Printf("country is %s\n", proxyConf.CountryIsoCode)
-
-	proxyList, err := GetProxiesList("RU")
-	// for _, proxy := range proxyList {
-	// 	latency, err := proxy.CheckLatency()
-	// 	if err != nil {
-	// 		log.Println(err)
-	// 		continue
-	// 	}
-	// 	// log.Printf("%s latency is %.5f s", proxy.Address, latency)
-	// }
-	checkErr(err)
 
 	logger := log.New()
 	logger.SetLevel(log.DebugLevel)
 
 	roundRobProxy := NewProxyRoundRobin(logger)
-	roundRobProxy.AddProxyConfigs(proxyList...)
+
+	updateProxiesTicker := time.Tick(time.Minute * 45)
+
+	go func() {
+		log.Info("getting proxies list")
+		proxyList, err := GetProxiesList("RU")
+		if err != nil {
+			log.Warningf("could not GetProxiesList: %#v", err)
+			roundRobProxy.AddProxyConfigs(proxyList...)
+		}
+		log.Info("start adding new proxies if exist")
+		roundRobProxy.AddProxyConfigs(proxyList...)
+		<-updateProxiesTicker
+	}()
+
+	checkProxiesTicker := time.Tick(time.Minute * 90)
+
+	go func() {
+		<-checkProxiesTicker
+		roundRobProxy.CheckProxiesWork()
+	}()
 
 	dialFunc := roundRobProxy.GetDialFunc()
 
 	srv := socks5Server.New(dialFunc)
 	srv.AuthUsernamePasswordCallback = func(c *socks5Server.Conn, username, password []byte) error {
 		user := string(username)
-		if user != "guest" {
-			return socks5.ErrAuthenticationFailed
+		if user == "" {
+			user = "undefined user"
 		}
+		// if user != "guest" {
+		// 	return socks5.ErrAuthenticationFailed
+		// }
 
 		log.Printf("Welcome %v!", user)
 		c.Data = user
@@ -85,6 +92,9 @@ func main() {
 		}
 	})
 
-	srv.ListenAndServe(":12345")
+	servAdrr := "0.0.0.0:1234"
+	log.WithField("addres", servAdrr).Info("start proxy sever")
+
+	checkErr(srv.ListenAndServe("0.0.0.0:1234"))
 
 }

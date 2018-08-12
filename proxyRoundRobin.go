@@ -52,6 +52,15 @@ func (prr *ProxyRoundRobin) addProxyConfToList(prConf ProxySocks5Conf) {
 	prr.log.WithField("addres", prConf.Address).WithField("latency", prConf.Latency).Debug("add proxy to list")
 	prr.proxyConfigs = append(prr.proxyConfigs, prConf)
 }
+func (prr *ProxyRoundRobin) rmProxyConfFromList(prConf ProxySocks5Conf) {
+	prr.mutex.Lock()
+	defer prr.mutex.Unlock()
+	for i, myPrConf := range prr.proxyConfigs {
+		if myPrConf.Address == prConf.Address {
+			prr.proxyConfigs = append(prr.proxyConfigs[:i], prr.proxyConfigs[i+1:]...)
+		}
+	}
+}
 
 func (prr *ProxyRoundRobin) isProxyExist(prConf ProxySocks5Conf) bool {
 	prr.mutex.Lock()
@@ -75,7 +84,6 @@ func (prr *ProxyRoundRobin) GetDialFunc() func(network, address string) (net.Con
 			prr.n = 0
 		}
 		conf := prr.proxyConfigs[prr.n]
-		fmt.Println(conf.Address)
 		prr.log.WithField("proxy", prr.n).WithField("adress", conf.Address).Info("using proxy")
 		prr.n++
 		prr.mutex.Unlock()
@@ -86,5 +94,42 @@ func (prr *ProxyRoundRobin) GetDialFunc() func(network, address string) (net.Con
 		}
 
 		return dialer.Dial(network, address)
+	}
+}
+
+func (prr *ProxyRoundRobin) CheckProxiesWork() {
+	prr.log.Info("start checking proxies work")
+	defer func() {
+		prr.mutex.Lock()
+		prr.log.WithField("active_proxies", len(prr.proxyConfigs)).Info("finish check proxies work")
+		prr.mutex.Unlock()
+	}()
+
+	checkedProxyAddrMap := make(map[string]bool)
+
+	for {
+		var prConf ProxySocks5Conf
+		prr.mutex.Lock()
+
+		for _, prConf = range prr.proxyConfigs {
+			if !checkedProxyAddrMap[prConf.Address] {
+				checkedProxyAddrMap[prConf.Address] = true
+				break
+			}
+		}
+		prr.mutex.Unlock()
+		if prConf.Address == "" {
+			// all proxies is checked
+			return
+		}
+		latency, err := prConf.CheckLatency()
+		if err != nil {
+			prr.log.WithField("addres", prConf.Address).WithField("error", err).Debug("error during check proxy, removing it")
+			prr.rmProxyConfFromList(prConf)
+		}
+		if latency >= 10 {
+			prr.log.WithField("addres", prConf.Address).WithField("latency", latency).Debug("to long lantency during check proxy, removing it")
+			prr.rmProxyConfFromList(prConf)
+		}
 	}
 }
