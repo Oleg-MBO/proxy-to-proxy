@@ -25,22 +25,43 @@ func NewProxyRoundRobin(logg *log.Logger) *ProxyRoundRobin {
 
 // AddProxyConf check and register proxy for use
 func (prr *ProxyRoundRobin) AddProxyConfigs(prConfs ...ProxySocks5Conf) {
-	go func(prConfs []ProxySocks5Conf) {
-		for _, PrConf := range prConfs {
-			if PrConf.Address != "" && !prr.isProxyExist(PrConf) {
-				latency, err := PrConf.CheckLatency()
-				if err != nil {
-					prr.log.WithError(err).WithField("addres", PrConf.Address).Debug("can`t add proxy to list")
-					continue
-				}
-				if latency > 10 {
-					prr.log.WithField("addres", PrConf.Address).WithField("latency", latency).Debug("can`t add proxy to list, latency>10")
-					continue
-				}
-				prr.addProxyConfToList(PrConf)
+
+	prConfChan := make(chan ProxySocks5Conf)
+
+	checkLatAndAdd := func() {
+		prr.log.Debug("run checkLatAndAdd")
+		for PrConf := range prConfChan {
+			// prr.log.WithField("addres", PrConf.Address).Debug("got proxy")
+			latency, err := PrConf.CheckLatency()
+			if err != nil {
+				prr.log.WithError(err).WithField("addres", PrConf.Address).Debug("can`t add proxy to list")
+				continue
 			}
+			if latency > 10 {
+				prr.log.WithField("addres", PrConf.Address).WithField("latency", latency).Debug("can`t add proxy to list, latency>10")
+				continue
+			}
+			prr.addProxyConfToList(PrConf)
 		}
-	}(prConfs)
+	}
+	wg := sync.WaitGroup{}
+	for i := 0; i <= 20; i++ {
+		wg.Add(1)
+		go func() {
+			checkLatAndAdd()
+			wg.Done()
+		}()
+	}
+
+	for _, PrConf := range prConfs {
+		if PrConf.Address != "" && !prr.isProxyExist(PrConf) {
+			// log.WithField("address", PrConf.Address).Debug("send to prConfChan")
+			prConfChan <- PrConf
+		}
+	}
+
+	close(prConfChan)
+	wg.Wait()
 }
 
 func (prr *ProxyRoundRobin) addProxyConfToList(prConf ProxySocks5Conf) {
@@ -49,7 +70,7 @@ func (prr *ProxyRoundRobin) addProxyConfToList(prConf ProxySocks5Conf) {
 	}
 	prr.mutex.Lock()
 	defer prr.mutex.Unlock()
-	prr.log.WithField("addres", prConf.Address).WithField("latency", prConf.Latency).Debug("add proxy to list")
+	prr.log.WithField("addres", prConf.Address).WithField("latency", prConf.Latency).Info("add proxy to list")
 	prr.proxyConfigs = append(prr.proxyConfigs, prConf)
 }
 func (prr *ProxyRoundRobin) rmProxyConfFromList(prConf ProxySocks5Conf) {

@@ -40,24 +40,20 @@ func main() {
 
 	roundRobProxy := NewProxyRoundRobin(logger)
 
-	updateProxiesTicker := time.Tick(time.Minute * 45)
+	updateProxiesTicker := time.Tick(time.Minute * 15)
 
 	go func() {
 		log.Info("getting proxies list")
 		proxyList, err := GetProxiesList("RU")
 		if err != nil {
 			log.Warningf("could not GetProxiesList: %#v", err)
-			roundRobProxy.AddProxyConfigs(proxyList...)
+			// roundRobProxy.AddProxyConfigs(proxyList...)
 		}
-		log.Info("start adding new proxies if exist")
+		log.Info("start adding proxies")
 		roundRobProxy.AddProxyConfigs(proxyList...)
+
 		<-updateProxiesTicker
-	}()
 
-	checkProxiesTicker := time.Tick(time.Minute * 90)
-
-	go func() {
-		<-checkProxiesTicker
 		roundRobProxy.CheckProxiesWork()
 	}()
 
@@ -92,9 +88,9 @@ func main() {
 		}
 	})
 
-	servAdrr := "0.0.0.0:1234"
+	servAdrr := "0.0.0.0:8081"
 	log.WithField("addres", servAdrr).Info("start proxy sever")
 
-	checkErr(srv.ListenAndServe("0.0.0.0:1234"))
+	checkErr(srv.ListenAndServe(servAdrr))
 
 }
